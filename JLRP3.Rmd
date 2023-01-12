@@ -1,0 +1,556 @@
+---
+title: "Project 3 - Retail Marketing"
+output: html_notebook
+---
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(janitor)
+library(skimr)
+library(kableExtra)
+library(GGally)
+library(vip)
+library(fastshap)
+library(ISLR)
+library(tree)
+library(dplyr)
+library(ggplot2)
+library(factoextra)
+library(viridis)
+library(hrbrthemes)
+library(corrplot)
+library(imputeMissings)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+campaign <- read_csv("marketing_campaign.csv") %>% clean_names() 
+# removed z_cost & z_rev columns manually in excel 
+customers <- read_csv("new_customers_mkt.csv") %>% clean_names()
+
+
+campaign1 <- campaign
+
+campaign4 = subset(campaign1, select= -c(id, birth, dt_customer))
+head(campaign4)
+
+
+skimr::skim(campaign)
+head(campaign)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+#Exploratory Analysis
+
+#correlations
+cor1 <- campaign %>%
+  select_if(is.numeric) %>%
+  drop_na() %>%
+  cor()
+  corrplot(cor1, method = 'color', order = 'alphabet')
+
+#Demographics 
+
+#Count of Kids
+campaign %>%
+  ggplot(aes(x=kids)) +
+  geom_histogram(stat="count") +
+  labs(title = "Kids")
+
+campaign %>%
+  group_by(kids) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Count of Education
+campaign %>%
+  ggplot(aes(x=education)) +
+  geom_histogram(stat="count") +
+  labs(title = "Education")
+
+campaign %>%
+  group_by(education) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Count of Marital Status
+campaign %>%
+  ggplot(aes(x=mar_stat)) +
+  geom_histogram(stat="count") +
+  labs(title = "Marital Status")
+
+campaign %>%
+  group_by(mar_stat) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+
+#Count of Teens
+campaign %>%
+  ggplot(aes(x=teens)) +
+  geom_histogram(stat="count") +
+  labs(title = "Teens")
+
+campaign %>%
+  group_by(teens) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Count of Complaints
+campaign %>%
+  ggplot(aes(x=cmplain)) +
+  geom_histogram(stat="count") +
+  labs(title = "Complaints")
+
+campaign %>%
+  group_by(cmplain) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Count of Birth Years 
+campaign %>%
+  ggplot(aes(x=birth)) +
+  geom_histogram(stat="count") +
+  labs(title = "Count of Birth Years")
+
+campaign %>%
+  group_by(birth) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Count of # of Days Since Purchase
+campaign %>%
+  ggplot(aes(x=recency)) +
+  geom_histogram(stat="count") +
+  labs(title = "# of Days Since Purchase")
+
+campaign %>%
+  group_by(recency) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Amount Spent on Product 
+
+#Amount Spent on Wine In The Last Two Years
+campaign %>%
+  ggplot(aes(x=wines)) +
+  geom_histogram(stat="count") +
+  labs(title = "Amount Spent on Wine In The Last Two Years")
+
+campaign %>%
+  group_by(wines) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Amount Spent on Fruits In The Last Two Years
+campaign %>%
+  ggplot(aes(x=fruits)) +
+  geom_histogram(stat="count") +
+  labs(title = "Amount Spent on Fruits")
+
+campaign %>%
+  group_by(fruits) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Amount Spent on Meats In The Last Two Years
+campaign %>%
+  ggplot(aes(x=meat)) +
+  geom_histogram(stat="count") +
+  labs(title = "Amount Spent on Meats In The Last Two Years")
+
+campaign %>%
+  group_by(meat) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Amount Spent on Fish In The Last Two Years
+campaign %>%
+  ggplot(aes(x=fish)) +
+  geom_histogram(stat="count") +
+  labs(title = "Amount Spent on Fish In The Last Two Years")
+
+campaign %>%
+  group_by(fish) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Amount Spent on Sweets In The Last Two Years
+campaign %>%
+  ggplot(aes(x=sweets)) +
+  geom_histogram(stat="count") +
+  labs(title = "Amount Spent on Sweets In The Last Two Years")
+
+campaign %>%
+  group_by(sweets) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Amount Spent on Gold In The Last Two Years
+campaign %>%
+  ggplot(aes(x=gold)) +
+  geom_histogram(stat="count") +
+  labs(title = "Amount Spent on Gold In The Last Two Years")
+
+campaign %>%
+  group_by(gold) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Responsiveness to Previous Promotions
+
+#Number of purchases made with a discount
+campaign %>%
+  ggplot(aes(x=deals)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of purchases made with a discount")
+
+campaign %>%
+  group_by(deals) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of customers accepting offer in the 1st campaign 
+campaign %>%
+  ggplot(aes(x=cmp1)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of customers accepting offer in the 1st campaign")
+
+campaign %>%
+  group_by(cmp1) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of customers accepting offer in the 2nd campaign 
+campaign %>%
+  ggplot(aes(x=cmp2)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of customers accepting offer in the 2nd campaign")
+
+campaign %>%
+  group_by(cmp2) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of customers accepting offer in the 3rd campaign 
+campaign %>%
+  ggplot(aes(x=cmp3)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of customers accepting offer in the 3rd campaign")
+
+campaign %>%
+  group_by(cmp3) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of customers accepting offer in the 4th campaign 
+campaign %>%
+  ggplot(aes(x=cmp4)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of customers accepting offer in the 4th campaign")
+
+campaign %>%
+  group_by(cmp4) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of customers accepting offer in the 5th campaign 
+campaign %>%
+  ggplot(aes(x=cmp5)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of customers accepting offer in the 5th campaign")
+
+campaign %>%
+  group_by(cmp5) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of customers accepting offer in the last campaign 
+campaign %>%
+  ggplot(aes(x=response)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of customers accepting offer in the last campaign")
+
+campaign %>%
+  group_by(response) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+campaign$response <- as.factor(campaign$response)
+
+#Purchases Channel
+
+#Number of purchases made through the company’s web site
+campaign %>%
+  ggplot(aes(x=web)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of purchases made through the company’s web site")
+
+campaign %>%
+  group_by(web) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of purchases made using a catalog
+campaign %>%
+  ggplot(aes(x=catalog)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of purchases made through the company’s catalog")
+
+campaign %>%
+  group_by(catalog) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of purchases made in stores
+campaign %>%
+  ggplot(aes(x=store)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of purchases made in stores")
+
+campaign %>%
+  group_by(store) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Number of visits to company’s web site in the last month
+campaign %>%
+  ggplot(aes(x=visits)) +
+  geom_histogram(stat="count") +
+  labs(title = "Number of visits to company’s web site in the last month")
+
+campaign %>%
+  group_by(visits) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(pct = n/sum(n))
+
+#Demographics Continued 
+
+#Income Vs Response
+ggplot(campaign, aes(x=response, y=income)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Income Vs Response") +
+  xlab("Response")
+
+#Education Vs Response
+ggplot(campaign, aes(x=education, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Education Vs Response") +
+  xlab("Education")
+
+#Marital Status Vs Response 
+ggplot(campaign, aes(x=mar_stat, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Marital Status Vs Response") +
+  xlab("Marital Stauts")
+
+#Amount Spent on Product Continued
+
+#Amount Spent on Wine Vs Response 
+ggplot(campaign, aes(x=wines, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Amount Spent on Wine In The Last Two Years Vs Response") +
+  xlab("$ Spent on Wine")
+
+#Amount Spent on Fruits Vs Response 
+ggplot(campaign, aes(x=wines, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Amount Spent on Fruits In The Last Two Years Vs Response") +
+  xlab("$ Spent on Fruits")
+
+#Amount Spent on Meats Vs Response 
+ggplot(campaign, aes(x=meat, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Amount Spent on Meats In The Last Two Years Vs Response") +
+  xlab("$ Spent on Meats")
+
+#Amount Spent on fish Vs Response 
+ggplot(campaign, aes(x=fish, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Amount Spent on Fish In The Last Two Years Vs Response") +
+  xlab("$ Spent on Fish")
+
+#Amount Spent on Sweets Vs Response 
+ggplot(campaign, aes(x=sweets, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Amount Spent on Sweets In The Last Two Years Vs Response") +
+  xlab("$ Spent on Sweets")
+
+#Amount Spent on Gold Vs Response 
+ggplot(campaign, aes(x=gold, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Amount Spent on Gold In The Last Two Years Vs Response") +
+  xlab("$ Spent on Gold")
+
+#Responsiveness to Previous Promotions Continued
+
+#Number of purchases made with a discount Vs Response 
+ggplot(campaign, aes(x=deals, y=response)) +
+  geom_boxplot()  +
+  scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+  geom_jitter(color="black", size=0.4, alpha=0.9) +
+  theme_ipsum() +
+  theme(
+  legend.position="none",
+  plot.title = element_text(size=11)
+  ) +
+  ggtitle("Number of purchases made with a discount Vs Response") +
+  xlab("# of Purchases Made")
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+# removed na from campaign, specifically income
+campaign5 <- impute(campaign4)
+
+head(campaign5)
+skimr::skim(campaign5)
+
+campaign5$response <- as.factor(campaign5$response)
+
+#dummy for education 
+campaign5$other <- ifelse(campaign2$education == '2nCycle', 1, 0)
+campaign5$basic <- ifelse(campaign2$education == 'Basic', 1, 0)
+campaign5$grad <- ifelse(campaign2$education == 'Graduation', 1, 0)
+campaign5$master <- ifelse(campaign2$education == 'Master', 1, 0)
+campaign5$phd <- ifelse(campaign2$education == 'PhD', 1, 0)
+
+#dummy for marital status
+campaign5$ab <- ifelse(campaign2$mar_stat == 'Absurd', 1, 0)
+campaign5$al <- ifelse(campaign2$mar_stat == 'Alone', 1, 0)
+campaign5$divorce <- ifelse(campaign2$mar_stat == 'Divorce', 1, 0)
+campaign5$married <- ifelse(campaign2$mar_stat == 'Married', 1, 0)
+campaign5$partner <- ifelse(campaign2$mar_stat == 'Parnter', 1, 0)
+campaign5$single <- ifelse(campaign2$mar_stat == 'Single', 1, 0)
+campaign5$widow <- ifelse(campaign2$mar_stat == 'Widow', 1, 0)
+campaign5$lol <- ifelse(campaign2$mar_stat == 'YOLO', 1, 0)
+
+#scale numeric
+
+#campaign2$income <- scale(campaign2$income)
+#campaign2$recency <- scale(campaign2$recency)
+#campaign2$wines <- scale(campaign2$wines)
+#campaign2$fruits <- scale(campaign2$fruits)
+#campaign2$meat <- scale(campaign2$meat)
+#campaign2$fish <- scale(campaign2$fish)
+#campaign2$sweets <- scale(campaign2$sweets)
+#campaign2$gold <- scale(campaign2$gold)
+#campaign2$deals <- scale(campaign2$deals)
+#campaign2$web <- scale(campaign2$web)
+#campaign2$catalog <- scale(campaign2$catalog)
+#campaign2$store <- scale(campaign2$store)
+#campaign2$visits <- scale(campaign2$visits)
+
+
+#removed irrelevant variables
+organics = subset(campaign5, select= -c(mar_stat, education, response))
+head(organics)
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+#optimal number of clusters
+fviz_nbclust(organics, kmeans, method="wss")
+```
+
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(99)
+
+clusters1 <- kmeans(organics, 6, iter.max = 200, nstart = 10)
+print(clusters1)
+
+#clusters visualized
+
+fviz_cluster(clusters5,organics,ellipse.type="norm",geom="point")
+```
+
