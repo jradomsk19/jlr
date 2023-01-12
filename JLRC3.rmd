@@ -1,0 +1,740 @@
+---
+title: "ML Challenge 3: Predicting Boston Home Prices"
+author: "Josh Radomsky"
+date: "11/8/2022" 
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    theme: paper
+    highlight: tango
+---
+
+
+## Library
+
+```{r, message=FALSE, warning=FALSE}
+library(tidymodels)
+library(tidyverse)
+library(janitor)
+library(vip)
+library(skimr)
+library(MASS)
+library(corrplot)
+library(DALEX)  
+library(DALEXtra)
+```
+
+
+## DATA
+
+import data 
+
+```{r}
+boston <- read_csv("boston_train.csv") %>% clean_names()
+kaggle <- read_csv("boston_holdout.csv") %>% clean_names()
+
+
+boston %>% skim()
+```
+
+
+```{r}
+options(scipen = 999)
+ggplot(boston, aes(x = av_total)) + 
+  geom_histogram(bins = 50, col= "white") +
+  labs(title=" Sale Price")
+
+ggplot(boston, aes(x = av_total)) + 
+  geom_histogram(bins = 50, col= "white") +
+  scale_x_log10() +
+  labs(title="Histogram Log of Sale Price")
+
+# comparison of year remodeled vs AV Total. Doesn't seem to contain a significant linear relationship 
+
+boston %>%
+  filter(yr_remod > 0) -> boston2
+
+
+ggplot(boston2, aes(x = yr_remod, y = av_total)) +
+      geom_point() +
+      geom_smooth(method=lm, se=FALSE, fullrange=TRUE)+
+      labs(title = "AV Total Vs Year Remodeled") +
+      geom_density_2d()
+      stat_density_2d(aes(fill = ..level..), geom="polygon") 
+
+
+      
+# comparison of homes built in 1990s vs AV Total. 
+      
+boston %>%
+  filter(between(yr_built, ('1800'), ('2022'))) -> boston3
+
+boston %>%
+  filter(between(yr_built, ('1990'), ('1999'))) -> boston4
+
+ggplot(boston3, aes(x = yr_built, y = av_total)) +
+      geom_point() +
+      geom_smooth(method=lm, se=FALSE, fullrange=TRUE)+
+      labs(title = "AV Total Vs Year Built Overall") 
+
+ggplot(boston4, aes(x = yr_built, y = av_total)) +
+      geom_point() +
+      geom_smooth(method=lm, se=FALSE, fullrange=TRUE) +
+      labs(title = "AV Total Vs Year Built From 1990 to 1999") 
+
+# comparison of owner occupied homes 
+
+ggplot(boston, aes(x = own_occ, y = av_total)) +
+      geom_boxplot(outlier.colour="red", outlier.shape=6, outlier.size=1) +
+      stat_summary(fun.y=mean, geom="point", shape=23, size=4) +
+      labs(title = "AV Total Vs Owner Occupied Properties")
+      coord_cartesian(ylim = c(0, 900000))
+      
+# cor plot
+cor1 <- boston %>%
+  select_if(is.numeric) %>%
+  drop_na() %>%
+  cor()
+  corrplot(cor1, method = 'color', order = 'alphabet')
+  
+
+```
+
+
+```{r}
+# 80/20 split plus K-Fold
+
+bsplit <- initial_split(boston, prop = 0.80)
+train <- training(bsplit) 
+test  <-  testing(bsplit)
+
+
+kfold_splits <- vfold_cv(train, v=5)
+
+```
+
+
+```{r}
+boston_recipe <-
+  recipe(av_total ~ land_sf + living_area + yr_built + city_state + r_ovrall_cnd + r_full_bth +    r_ext_cnd + r_total_rms + r_ac  + r_heat_typ + r_int_cnd + r_fplace + r_bldg_styl + r_total_rms   + r_ext_fin + r_kitch_style + r_bth_style + r_half_bth + r_bdrms + r_roof_typ, data = train)%>%
+  step_mutate(age = 2022 - yr_built ) %>% 
+  step_rm(yr_built) %>%
+  step_impute_median(all_numeric_predictors()) %>% # missing values numeric 
+  step_novel(all_nominal_predictors()) %>% # new factor levels 
+  step_unknown(all_nominal_predictors()) %>% # missing values 
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>%
+  step_nzv(all_predictors()) %>%
+  step_other(all_nominal_predictors(),threshold = 0.05) 
+
+bake(boston_recipe %>% prep(),train %>% sample_n(1000))
+
+```
+
+
+
+```{r}
+lm_model <- linear_reg(mixture=1, penalty = 0.001) %>%
+  set_engine("glmnet") %>%
+  set_mode("regression") 
+
+lm_wflow <-workflow() %>%
+  add_recipe(boston_recipe) %>%
+  add_model(lm_model) %>%
+  fit(train)
+
+tidy(lm_wflow) %>%
+  mutate_if(is.numeric,round,4)
+
+lm_wflow %>%
+  pull_workflow_fit() %>%
+  tidy()%>%
+  mutate_if(is.numeric,round,4)
+
+lm_wflow %>%
+  pull_workflow_fit() %>%
+  vi() %>% 
+  mutate(Importance = if_else(Sign == "NEG", -Importance,Importance)) %>% 
+  ggplot(aes(reorder(Variable,Importance),Importance, fill=Sign)) +
+  geom_col() + coord_flip() + labs(title="linear model importance")
+  
+bind_cols(
+  predict(lm_wflow,train, type="numeric"), train) %>% 
+  mutate(part = "train") -> score_lm_train
+
+bind_cols(
+  predict(lm_wflow,test), test) %>% mutate(part = "test") -> score_lm_test
+
+bind_rows(score_lm_train, score_lm_test) %>% 
+  group_by(part) %>% 
+  metrics(av_total,.pred) %>%
+  pivot_wider(id_cols = part, names_from = .metric, values_from = .estimate)
+```
+
+
+```{r}
+# stepAIC of chosen model + plots of residuals
+
+steplin <- glm(av_total ~ land_sf + living_area + yr_built + city_state + r_ovrall_cnd + r_full_bth + r_ext_cnd + r_total_rms + r_ac  
+  + r_heat_typ + r_int_cnd + r_fplace + r_bldg_styl + r_total_rms + r_ext_fin + r_kitch_style + r_bth_style + r_half_bth + r_bdrms + r_roof_typ, data = train)
+step <- stepAIC(steplin, direction="both") 
+summary(step)
+
+boston_recipe1 <-
+    glm(av_total ~ land_sf + living_area + yr_built + city_state + r_ovrall_cnd + r_full_bth + r_ext_cnd + r_total_rms + r_ac  
+  + r_heat_typ + r_int_cnd + r_fplace + r_bldg_styl + r_total_rms + r_ext_fin + r_kitch_style + r_bth_style + r_half_bth + r_bdrms + r_roof_typ, data = train)
+plot(boston_recipe1)
+```
+
+
+```{r}
+xgb_model <- boost_tree(trees=tune(), 
+                        learn_rate = tune(),
+                        tree_depth = tune()) %>%
+                        set_engine("xgboost",
+                        importance="permutation") %>%
+                        set_mode("regression")
+
+
+xgb_wflow <-workflow() %>%
+  add_recipe(boston_recipe) %>%
+  add_model(xgb_model)
+
+
+xgb_search_res <- xgb_wflow %>% 
+  tune_bayes(
+    resamples = kfold_splits,
+    initial = 5,
+    iter = 50, 
+    metrics = metric_set(rmse, rsq, mae),
+    control = control_bayes(no_improve = 20, verbose = TRUE)
+    )
+
+```
+
+
+```{r}
+xgb_search_res %>%
+  collect_metrics()  %>% 
+  filter(.metric == "rmse")
+
+xgb_search_res %>%
+  collect_metrics()  %>% 
+  filter(.metric == "rsq")
+
+xgb_search_res %>%
+  collect_metrics()  %>% 
+  filter(.metric == "mae")
+
+xgb_search_res %>%
+  collect_metrics() %>%
+  ggplot(aes(learn_rate, mean, color = .metric)) +
+  geom_errorbar(aes(
+  ymin = mean - std_err,
+  ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+
+# graph of tree depth 
+xgb_search_res %>%
+  collect_metrics() %>%
+  ggplot(aes(tree_depth, mean, color = .metric)) +
+  geom_errorbar(aes(
+  ymin = mean - std_err,
+  ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+
+# graph of number of trees 
+xgb_search_res %>%
+  collect_metrics() %>%
+  ggplot(aes(trees, mean, color = .metric)) +
+  geom_errorbar(aes(
+  ymin = mean - std_err,
+  ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+rf_model <- rand_forest(trees=tune(), min_n=tune()) %>%
+  set_engine("ranger",importance="permutation") %>%
+  set_mode("regression")
+
+
+rf_wflow <-workflow() %>%
+  add_recipe(boston_recipe) %>%
+  add_model(rf_model)
+
+rf_grid <- grid_regular(trees(c(25,1000)), min_n(c(5,10)), levels = 4)
+
+doParallel::registerDoParallel()
+rf_grid_search <-
+  tune_grid(
+    rf_wflow,
+    resamples = kfold_splits,
+    metrics = metric_set(rmse, rsq, mae),
+    grid = rf_grid
+    )
+
+```
+
+
+
+```{r}
+lowest_xgb_rmse <- xgb_search_res %>%
+  select_best("rmse")
+
+lowest_xgb_rmse
+
+xgb_wflow <- finalize_workflow(
+  xgb_wflow, lowest_xgb_rmse
+  ) %>% 
+  fit(train)
+
+
+lowest_rf_rmse <- rf_grid_search %>%
+  select_best("rmse")
+
+rf_final <- finalize_workflow(
+  rf_wflow, lowest_rf_rmse
+  ) %>% 
+  fit(train)
+```
+
+
+```{r}
+rf_grid_search %>%  collect_metrics()
+```
+
+
+```{r}
+rf_grid_search %>%
+  collect_metrics()  %>% 
+  filter(.metric == "rmse")
+
+rf_grid_search %>%
+  collect_metrics()  %>% 
+  filter(.metric == "rsq")
+
+rf_grid_search %>%
+  collect_metrics()  %>% 
+  filter(.metric == "mae")
+
+
+rf_grid_search %>%
+  collect_metrics() %>%
+  ggplot(aes(min_n, mean, color = .metric)) +
+  geom_errorbar(aes(
+    ymin = mean - std_err,
+    ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+
+
+rf_grid_search %>%
+  collect_metrics() %>%
+  ggplot(aes(trees, mean, color = .metric)) +
+  geom_errorbar(aes(
+    ymin = mean - std_err,
+    ymax = mean + std_err
+  ),
+  alpha = 0.5
+  ) +
+  geom_line(size = 1.5) +
+  facet_wrap(~.metric, scales = "free", nrow = 2) +
+  scale_x_log10() +
+  theme(legend.position = "none")
+```
+
+## VIP 
+What variables are important 
+```{r}
+xgb_wflow %>%
+  extract_fit_parsnip() %>%
+  vip()
+
+rf_final  %>% pull_workflow_fit() %>%
+ vip()
+```
+
+ 
+
+```{r}
+#xgb metrics eval
+
+bind_cols(
+  predict(xgb_wflow,train), train) %>% 
+  metrics(av_total,.pred)
+
+bind_cols(
+  predict(xgb_wflow,test), test) %>% 
+  metrics(av_total,.pred)
+
+#rf metrics eval
+
+bind_cols(
+  predict(rf_final,train), train) %>% 
+  metrics(av_total,.pred)
+
+bind_cols(
+  predict(rf_final,test), test) %>% 
+  metrics(av_total,.pred)
+```
+
+
+
+```{r}
+#xg pred
+bind_cols(predict(xgb_wflow,test),test) %>%
+  mutate(error = av_total - .pred,
+  abs_error = abs(error)) %>% 
+  slice_min(order_by = abs_error,n=10) -> best_estimate 
+best_estimate
+
+best_estimate %>% 
+ summarize(
+ mean(error),
+ mean(av_total),
+ mean(yr_built))
+
+
+bind_cols(predict(xgb_wflow,test),test)%>%
+  mutate(error = av_total - .pred,
+  abs_error = abs(error)) %>% 
+  slice_min(order_by = error,n=10) -> overesimate
+overesimate
+
+
+overesimate %>% 
+  summarize(mean(error),
+  mean(av_total),
+  mean(yr_built))
+
+
+#rf pred
+bind_cols(predict(rf_final,test),test) %>%
+  mutate(error = av_total - .pred, abs_error = abs(error)) %>% 
+  slice_min(order_by = abs_error,n=10) -> best_estimate2 
+best_estimate2
+
+best_estimate2 %>% 
+  summarize(
+  mean(error),
+  mean(av_total),
+  mean(yr_built))
+
+
+bind_cols(predict(rf_final,test),test)%>%
+  mutate(error = av_total - .pred,
+  abs_error = abs(error)) %>% 
+  slice_min(order_by = error,n=10) -> overesimate2
+overesimate2
+
+
+overesimate2 %>% 
+  summarize(mean(error),
+  mean(av_total),
+  mean(yr_built))
+
+
+#lin reg pred
+bind_cols(predict(lm_wflow,test),test) %>%
+  mutate(error = av_total - .pred, abs_error = abs(error)) %>% 
+  slice_min(order_by = abs_error,n=10) -> best_estimate3 
+best_estimate3
+
+best_estimate3 %>% 
+  summarize(
+  mean(error),
+  mean(av_total),
+  mean(yr_built))
+
+ 
+bind_cols(predict(lm_wflow,test),test)%>%
+  mutate(error = av_total - .pred,
+  abs_error = abs(error)) %>% 
+  slice_min(order_by = error,n=10) -> overesimate3
+overesimate3
+
+ 
+overesimate3 %>% 
+  summarize(mean(error),
+  mean(av_total),
+  mean(yr_built))
+
+
+```
+
+## KAGGLE 
+
+```{r}
+bind_cols(predict(rf_final,kaggle),kaggle) %>%
+ dplyr:: select(pid,av_total = .pred) %>% write_csv("jlr_kaggle8.csv")
+```
+
+
+```{r}
+#Extra Credit 1
+
+evaluate_models <- function(model_workflow, model_name){
+    # 1. Make Predictions
+score_train <- bind_cols(
+  predict(model_workflow,train, type="prob"), 
+  predict(model_workflow,train, type="class"),
+  train) %>% 
+  mutate(part = "train") 
+
+score_test <- bind_cols(
+  predict(model_workflow,test, type="prob"), 
+   predict(model_workflow,test, type="class"),
+  test) %>% 
+  mutate(part = "test") 
+
+options(yardstick.event_first = FALSE)
+
+bind_rows(score_train, score_test) %>%
+  group_by(part) %>%
+  metrics(is_bad_buy, .pred_1, estimate=.pred_class) %>%
+  pivot_wider(id_cols = part, names_from = .metric, values_from = .estimate) %>%
+  mutate(model_name = model_name) %>% print()
+
+# ROC Curve 
+bind_rows(score_train, score_test) %>%
+  group_by(part) %>%
+  roc_curve(truth=is_bad_buy, predicted=.pred_1) %>% 
+  autoplot() +
+   geom_vline(xintercept = 0.20,    
+             color = "black",
+             linetype = "longdash") +
+   labs(title = model_name, x = "FPR(1 - specificity)", y = "TPR(recall)") -> roc_chart 
+
+ 
+  print(roc_chart)
+# Score Distribution 
+score_test %>%
+  ggplot(aes(.pred_1,fill=is_bad_buy)) +
+  geom_histogram(bins=50) +
+  geom_vline(aes(xintercept=.5, color="red")) +
+  geom_vline(aes(xintercept=.3, color="green")) +
+  geom_vline(aes(xintercept=.7, color="blue")) +
+  labs(title = model_name) -> score_dist 
+
+print(score_dist)
+
+  # Variable Importance 
+  model_workflow %>%
+    extract_fit_parsnip() %>%
+    vip(30) + 
+    labs(model_name)  -> vip_model 
+  
+    print(vip_model)
+    
+  
+}
+
+#Extra Credit 1 
+evaluate_models(xgb_wflow_fit, "XGB model")
+```
+
+
+```{r}
+xgb_wflow %>%
+    pull_workflow_fit() %>%
+    vip(30) + 
+    labs("XGB VIP")
+```
+
+
+```{r}
+score_test <- bind_cols(
+  predict(xgb_wflow,test, type="prob"), 
+  predict(xgb_wflow_fit,test, type="class"),
+  test) %>% 
+  mutate(part = "test") 
+
+# lowest scores 
+score_test %>%
+  slice_min(order_by = .pred_1, n=10)
+
+# highest scores 
+score_test %>%
+  slice_max(order_by = .pred_1, n=10)
+
+# highest scores good cars
+score_test %>%
+  filter(is_bad_buy == 0) %>%
+  slice_max(order_by = .pred_1, n=10)
+```
+
+
+```{r}
+# your model variables of interest 
+model_variables = c(".pred")
+
+# step 1. create explainer 
+xgb_explainer <- 
+  explain_tidymodels(
+    xgb_wflow,   # fitted workflow object 
+    data = train,    # original training data
+    y = train$is_bad_buy, # predicted outcome 
+    label = "xgboost",
+    verbose = FALSE
+  )
+
+# step 2. get the record you want to predict 
+single_record <- score_test %>% select(model_variables) %>%
+  mutate(intercept = "", prediction = .pred_1) %>%
+  slice_max(order_by = .pred_1, n=10) %>% head(1) 
+
+
+# step 3. run the explainer 
+xgb_breakdown <- predict_parts(explainer = xgb_explainer, 
+                               new_observation = single_record 
+                               )
+
+# step 4. plot it. 
+# you notice you don't get categorical values ...  
+xgb_breakdown %>% plot()
+
+# --- more involved explanations with categories. ---- 
+
+# step 4a.. convert breakdown to a tibble so we can join it
+xgb_breakdown %>%
+  as_tibble() -> breakdown_data 
+
+# step 4b. transpose your single record prediction 
+single_record %>% 
+ gather(key="variable_name",value="value") -> prediction_data 
+
+# step 4c. get a predicted probability for plot 
+prediction_prob <- single_record[,".pred_1"] %>% pull()
+
+# step 5. plot it.
+breakdown_data %>% 
+  inner_join(prediction_data) %>%
+  mutate(contribution = round(contribution,3),) %>%
+  filter(variable_name != "intercept") %>%
+  mutate(variable = paste(variable_name,value,sep = ": ")) %>% 
+  ggplot(aes(y=reorder(variable, contribution), x= contribution, fill=sign)) +
+  geom_col() + 
+  geom_text(aes(label=contribution), 
+          size=4,
+            position=position_dodge(width=0.7),
+            vjust=0.5,
+            )+
+  labs(
+    title = "DALEX explainations",
+    subtitle = paste("predicted:",as.character(round(prediction_prob,3))),
+                    x="contribution",
+                    y="features")
+
+```
+## SHAPLEY Explainer 
+
+```{r}
+# step 3. run the explainer 
+xgb_shapley <- predict_parts(explainer = xgb_explainer, 
+                               new_observation = single_record,
+                               type="shap")
+
+# step 4. plot it. 
+# you notice you don't get categorical values ...  
+xgb_shapley %>% plot()
+
+# --- more involved explanations with categories. ---- 
+
+# step 4a.. convert breakdown to a tibble so we can join it
+xgb_shapley %>%
+  as_tibble() -> shap_data 
+
+# step 4b. transpose your single record prediction 
+single_record %>% 
+ gather(key="variable_name",value="value") -> prediction_data 
+
+# step 4c. get a predicted probability for plot 
+prediction_prob <- single_record[,".pred_1"] %>% mutate(.pred_1 = round(.pred_1,3)) %>% pull() 
+
+# step 5. plot it.
+shap_data %>% 
+  inner_join(prediction_data) %>%
+  mutate(variable = paste(variable_name,value,sep = ": ")) %>% 
+  group_by(variable) %>%
+  summarize(contribution = mean(contribution)) %>%
+  mutate(contribution = round(contribution,3),
+         sign = if_else(contribution < 0, "neg","pos")) %>%
+  ggplot(aes(y=reorder(variable, contribution), x= contribution, fill=sign)) +
+  geom_col() + 
+  geom_text(aes(label=contribution))+
+  labs(
+    title = "SHAPLEY explainations",
+    subtitle = paste("predicted probablity = ",prediction_prob) ,
+                    x="contribution",
+                    y="features")
+```
+
+
+```{r}
+any_5_records <- score_test %>%
+ sample_n(5)
+
+top_5_tp <- score_test %>%
+  filter(.pred_class == is_bad_buy) %>%
+  slice_max(.pred_1,n=5)
+
+top_5_fp <- score_test %>%
+  filter(.pred_class != is_bad_buy) %>%
+   filter(is_bad_buy == 0 ) %>%
+  slice_max(.pred_1,n=5)
+
+top_5_fn <- score_test %>%
+  filter(.pred_class != is_bad_buy ) %>%
+  filter(is_bad_buy == 1 ) %>%
+  slice_max(.pred_1,n=5)
+
+
+# example any 5 records
+for (row in 1:nrow(any_5_records)) {
+    s_record <- any_5_records[row,]
+    explain_prediction(s_record)
+} 
+
+# repeat for FP and FN 
+for (row in 1:nrow(top_5_tp)) {
+    s_record <- top_5_tp[row,]
+    explain_prediction(s_record)
+} 
+
+for (row in 1:nrow(top_5_fp)) {
+    s_record <- top_5_fp[row,]
+    explain_prediction(s_record)
+} 
+
+for (row in 1:nrow(top_5_fn)) {
+    s_record <- top_5_fn[row,]
+    explain_prediction(s_record)
+} 
+
+```
+
